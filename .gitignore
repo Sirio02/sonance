@@ -1,0 +1,7 @@
+*.mp3
+*.m4a
+*.flac
+*.wav
+*.zip
+my-music-backup*.json
+node_modules/

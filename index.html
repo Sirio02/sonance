@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://itunes.apple.com https://api.deezer.com; img-src 'self' data: blob: https://*.mzstatic.com https://*.dzcdn.net https://*.wikipedia.org https://upload.wikimedia.org https://i.ytimg.com; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' https://lrclib.net https://itunes.apple.com https://*.mzstatic.com https://*.dzcdn.net https://*.wikipedia.org https://upload.wikimedia.org https://*.workers.dev; worker-src 'self'; object-src 'none'; base-uri 'self'">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Sonance"><meta name="theme-color" content="#fbfaf7" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#14181d" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="css/app.css">
+<title>Sonance</title></head>
+<body>
+<div id="splash" aria-hidden="true"><div class="splash-brand"><svg class="logo" viewBox="0 0 148 40" height="52" role="img" aria-label="Sonance" focusable="false" xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="lgs" x1="0" x2="1" y1="0" y2="0"><stop offset="0" style="stop-color:var(--fg)"/><stop offset=".5" style="stop-color:var(--fg)"/><stop offset="1" style="stop-color:var(--acc)"/></linearGradient></defs><g fill="var(--acc)"><ellipse cx="9" cy="29" rx="6.2" ry="4.6" transform="rotate(-20 9 29)"/><path d="M13.6 27V8.5l9.4 3.2v4.2l-5.2-1.8V27z"/></g><text x="30" y="29" textLength="110" lengthAdjust="spacingAndGlyphs" font-size="27" font-weight="800" letter-spacing="-1" fill="url(#lgs)" style="font-family:ui-rounded,-apple-system,system-ui,sans-serif">Sonance</text><path class="logo-wave draw" d="M30 36.5q3.5-4.6 7 0t7 0 7 0 7 0 7 0 7 0 7 0 7 0 7 0 7 0 7 0 7 0 7 0 7 0" fill="none" stroke="var(--acc)" stroke-width="1.7" stroke-linecap="round" opacity=".9"/></svg></div></div>
+<main id="app">
+  <section id="v-lib" class="view enter"></section>
+  <section id="v-alb" class="view" hidden></section>
+  <section id="v-art" class="view" hidden></section>
+  <section id="v-pl" class="view" hidden></section>
+  <section id="v-you" class="view" hidden></section>
+  <section id="dt" class="detail" hidden></section>
+</main>
+<div id="mini" hidden></div>
+<nav id="tabs" aria-label="Sezioni"></nav>
+<div id="full" aria-label="Player"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<noscript>Sonance richiede JavaScript.</noscript>
+<script type="module" src="js/main.js"></script>
+</body></html>

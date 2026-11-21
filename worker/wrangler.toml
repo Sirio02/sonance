@@ -1,0 +1,8 @@
+name = "sonance-youtube-api"
+main = "src/index.js"
+compatibility_date = "2026-11-18"
+workers_dev = true
+
+[vars]
+# Impostare l'origine esatta della PWA GitHub Pages, es. https://utente.github.io
+ALLOWED_ORIGINS = "https://sirio02.github.io,http://localhost:8000"
