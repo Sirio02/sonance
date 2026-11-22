@@ -110,7 +110,7 @@ export function trackItems(t, { playlist } = {}) {
     L.artistsOf(t).length && { label: L.artistsOf(t).length > 1 ? 'Artisti del brano…' : 'Vai all\u2019artista', icon: 'art', fn: () => artistsMenu(t) },
     t.album && { label: 'Vai all\u2019album', icon: 'alb', fn: () => goAlbum(t) },
     { label: 'Informazioni brano', icon: 'clock', fn: () => infoSheet(t) },
-    { label: 'Testo e copertina…', icon: 'lyr', fn: () => lyricsMenu(t, { importFile: () => importLyricsFile(t), pickCover: () => pickImg(async f => { await setCover(t, f); toast('Copertina aggiornata'); }) }) },
+    { label: 'Testo e copertina…', icon: 'lyr', fn: () => lyricsMenu(t, { importFile: () => importLyricsFile(t), pickCover: () => pickImg(async f => { await setCover(t, f, undefined, { manual: true }); toast('Copertina aggiornata'); }) }) },
     { label: 'Modifica brano…', icon: 'edit', fn: () => editTrack(t) },
     { label: 'Elimina dall\u2019app', icon: 'trash', danger: true, fn: () => removeTrack(t) },
   ];
@@ -146,7 +146,7 @@ export function editTrack(t) {
     t.album = al; await L.saveTrack(t); L.touchData();
     if (pl.cur() === t) bus.emit('track', t);
   }, { extra: [
-    ['Scegli copertina…', () => pickImg(async f => { await setCover(t, f); toast('Copertina aggiornata'); }), true],
+    ['Scegli copertina…', () => pickImg(async f => { await setCover(t, f, undefined, { manual: true }); toast('Copertina aggiornata'); }), true],
     ['Cerca copertina e testo online', () => { toast('Ricerca in corso…'); L.enrichOne(t, true).then(({ err, changed }) => toast(err ? L.online.explain(err) : changed ? 'Trovato' : 'Nessun risultato affidabile')); }],
     ['Importa testo da file…', () => importLyricsFile(t), true],
     ['Rimuovi copertina', () => clearCover(t)],
@@ -350,7 +350,7 @@ export function openAlbum(al) {
     cover: () => { const c = thumb(al.tracks[0], 'big'); coverURL(al.tracks[0], 'l').then(u => setImg(c, u)); return c; },
     sub: l => al.artist + ' · ' + l.length + ' brani · ' + fmtLong(l.reduce((s, t) => s + (t.dur > 0 ? t.dur : 0), 0)),
     menu: l => [{ label: 'Riproduci dopo', icon: 'play', fn: () => pl.enqueueMany(l, true) }, { label: 'Aggiungi alla coda', icon: 'queue', fn: () => pl.enqueueMany(l) },
-      { label: 'Salva come playlist', icon: 'plus', fn: () => saveAsPlaylist(al.name, l) }, { label: 'Scegli copertina…', icon: 'edit', sync: true, fn: () => pickImg(f => setCover(l[0], f, 'album')) }],
+      { label: 'Salva come playlist', icon: 'plus', fn: () => saveAsPlaylist(al.name, l) }, { label: 'Scegli copertina…', icon: 'edit', sync: true, fn: () => pickImg(f => setCover(l[0], f, 'album', { manual: true })) }],
   });
 }
 export function openArtist(name) {

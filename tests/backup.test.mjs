@@ -20,7 +20,7 @@ test('backup: un backup VECCHIO (senza am/af/aa/av/nlv/ncv) si ripristina senza 
   setup();
   const old = { v: 2, tracks: [{ id: 'x1', name: 'uno.mp3', size: 10, title: 'Uno (rev)', artist: 'Lazza', fav: 1, p: 3 }, { id: 'x2', name: 'due.mp3', size: 20, title: 'Due', artist: 'Altro' }], playlists: { Mix: ['x1', 'x2'] } };
   const r = await L.restoreBackup(old);
-  assert.deepEqual(r, { hit: 1, wait: 1 });
+  assert.equal(r.hit, 1); assert.equal(r.wait, 1);
   const t = L.lib.list[0]; assert.equal(t.fav, 1); assert.equal(t.title, 'Uno (rev)'); assert.equal(t.am, undefined);
   assert.deepEqual(PL.Mix, ['a1']); assert.equal(Object.values(PEND)[0].pls[0], 'Mix');             // il brano mancante resta in attesa, con la sua playlist
 });
@@ -38,12 +38,12 @@ test('backup: formato non valido → errore chiaro, nessuna modifica', async () 
 
 /* ---- v5: validazione, andata e ritorno, compatibilità ---- */
 const { checkBackup, BACKUP_V, settingsForBackup } = await import('../js/backup.js');
-test('backup v5: esporta con versione e impostazioni complete, e si reimporta', async () => {
+test('backup v6: esporta con versione e impostazioni complete, e si reimporta', async () => {
   setup();
   const { S } = await import('../js/store.js');
   Object.assign(S, { eqOn: 1, eco: 1, shuffle: 1, repeat: 2, th: 'oled', ac: '#ff8800', cf: 4 });
   const f = await L.exportBackup(), j = JSON.parse(await f.text());
-  assert.equal(j.v, BACKUP_V); assert.equal(BACKUP_V, 5);
+  assert.equal(j.v, BACKUP_V); assert.equal(BACKUP_V, 6);
   for (const k of ['eqOn', 'eco', 'shuffle', 'repeat']) assert.ok(k in j.settings, k);
   Object.assign(S, { eqOn: 0, eco: 0, shuffle: 0, repeat: 0 });
   await L.restoreBackup(j);
@@ -72,4 +72,16 @@ test('backup: campi malevoli o malformati vengono scartati (nomi playlist specia
 test('backup: settingsForBackup include solo chiavi note', () => {
   const o = settingsForBackup({ eco: 1, mig: 3, lastBackup: 1, th: 'dark' });
   assert.deepEqual(o, { eco: 1, th: 'dark' });
+});
+
+test('backup v6: immagini scelte a mano — solo data URL di immagini, chiavi sicure, id di playlist ben formati', () => {
+  const ok = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==';
+  const raw = JSON.parse(JSON.stringify({ v: 6, tracks: [{ id: 'a', name: 'a.mp3', size: 1 }] }));
+  raw.images = JSON.parse('{"covers":{"Alazza|sinfonia":"' + ok + '","__proto__":"' + ok + '","x":"data:text/html;base64,PHNjcmlwdD4=","y":"javascript:alert(1)","z":5},"artists":{"lazza":"' + ok + '"}}');
+  raw.plid = JSON.parse('{"Mix":"11111111-aaaa-4bbb-8ccc-222222222222","bad":"x y","__proto__":"abcdabcd"}');
+  const r = checkBackup(raw);
+  assert.deepEqual(Object.keys(r.images.covers), ['Alazza|sinfonia']); assert.deepEqual(Object.keys(r.images.artists), ['lazza']);
+  assert.deepEqual(Object.keys(r.plid), ['Mix']);
+  assert.equal(checkBackup({ v: 5, tracks: [{ id: 'a', name: 'a.mp3', size: 1 }] }).images, undefined, 'un backup v5 non ha immagini');
+  assert.equal(checkBackup({ v: 6, tracks: [{ id: 'a', name: 'a.mp3', size: 1 }], images: { covers: { a: 'data:image/png;base64,' + 'A'.repeat(800000) } } }).images, undefined, 'immagini troppo grandi scartate');
 });

@@ -5,3 +5,4 @@
 *.zip
 my-music-backup*.json
 node_modules/
+tests/e2e/.cache/

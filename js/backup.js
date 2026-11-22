@@ -1,6 +1,6 @@
 /* Validazione e normalizzazione dei backup JSON (pura, testata in Node).
    Un backup può arrivare da una versione precedente, da una futura o da un file qualsiasi: qui si decide cosa è importabile. */
-export const BACKUP_V = 5;
+export const BACKUP_V = 6;
 const num = (v, a, b, d) => (Number.isFinite(+v) && v !== null && v !== '' ? Math.min(b, Math.max(a, +v)) : d);
 const flag = v => (v ? 1 : 0);
 const str = (v, max = 40) => (typeof v === 'string' && v.length <= max ? v : undefined);
@@ -49,10 +49,31 @@ export function checkBackup(j) {
   const covers = {};
   if (j.covers && typeof j.covers === 'object' && !Array.isArray(j.covers))
     for (const [n, u] of Object.entries(j.covers)) if (!BAD_NAMES.has(n) && typeof u === 'string' && /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(u)) covers[n] = u;
+  /* v6: identificatori stabili delle playlist e immagini scelte a mano («Backup completo»). I backup fino alla v5 non li hanno: restano validi. */
+  const plid = {};
+  if (j.plid && typeof j.plid === 'object' && !Array.isArray(j.plid))
+    for (const [n, id] of Object.entries(j.plid)) if (!BAD_NAMES.has(n) && typeof id === 'string' && /^[0-9a-f-]{8,64}$/i.test(id)) plid[n] = id;
+  const images = checkImages(j.images);
   const plays = Array.isArray(j.plays) ? j.plays.filter(p => p && typeof p === 'object' && typeof p.tid === 'string' && Number.isFinite(+p.at)) : [];
   const settings = {};
   if (j.settings && typeof j.settings === 'object') for (const [k, f] of Object.entries(SETTINGS)) { const x = f(j.settings[k]); if (x !== undefined) settings[k] = x; }
-  return { v, tracks, playlists, covers, plays, settings, dropped: j.tracks.length - tracks.length };
+  return { v, tracks, playlists, plid, covers, plays, settings, images, dropped: j.tracks.length - tracks.length };
+}
+
+/** Immagini scelte a mano: solo data URL di immagini, chiavi brevi, quantità e dimensione limitate. Restituisce undefined se non ce ne sono. */
+const IMG_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i, IMG_MAX_LEN = 700000, IMG_MAX_N = 3000;
+function checkImages(x) {
+  if (!x || typeof x !== 'object' || Array.isArray(x)) return undefined;
+  const pick = o => {
+    const out = {}; let n = 0;
+    if (o && typeof o === 'object' && !Array.isArray(o)) for (const [k, u] of Object.entries(o)) {
+      if (n >= IMG_MAX_N) break;
+      if (!BAD_NAMES.has(k) && k.length > 0 && k.length <= 240 && typeof u === 'string' && u.length <= IMG_MAX_LEN && IMG_RE.test(u)) { out[k] = u; n++; }
+    }
+    return out;
+  };
+  const covers = pick(x.covers), artists = pick(x.artists);
+  return Object.keys(covers).length || Object.keys(artists).length ? { covers, artists } : undefined;
 }
 
 /** Impostazioni da scrivere nel backup (solo chiavi note e definite). */
