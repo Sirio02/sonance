@@ -195,11 +195,18 @@ function settings() {
 
   /* dati */
   const info = h('pre', { class: 'info' });
+  /* «Annulla l'ultimo ripristino»: compare solo se esiste un'istantanea recente (24 ore) */
+  const undoBtn = h('button', { class: 'btn wide', hidden: true, onclick: doUndo }, 'Annulla l\u2019ultimo ripristino');
+  const undoHint = h('small', { class: 'hint', hidden: true }, 'Rimette com\u2019erano playlist, preferiti, ascolti e impostazioni prima dell\u2019ultimo ripristino. Disponibile per 24 ore.');
+  const paintUndo = async () => { const i = await L.restoreUndoInfo(); undoBtn.hidden = undoHint.hidden = !i; };
+  paintUndo(); whileShown(undoBtn, 'settings', paintUndo);
   G.data.push(panel('Salva e ripristina',
     h('button', { class: 'btn wide', onclick: doExport }, 'Salva un backup'),
+    toggle('Includi le copertine scelte a mano', 'Il file diventa pi\u00f9 grande. Serve se hai scelto tu le immagini di album e artisti: le altre si ritrovano online.', !!S.bkFull, v => { S.bkFull = v ? 1 : 0; saveS(); }),
     h('label', { class: 'btn wide', for: 'bi' }, 'Ripristina da un backup'),
     h('input', { id: 'bi', type: 'file', accept: '.json,application/json', hidden: true, onchange: doImport }),
-    h('small', { class: 'hint' }, 'Il backup è un file che puoi conservare in iCloud Drive o inviare a te stesso.'),
+    undoBtn, undoHint,
+    h('small', { class: 'hint' }, 'Il backup \u00e8 un file che puoi conservare in iCloud Drive o inviare a te stesso. Ripristinare non cancella nulla: i dati del file si uniscono a quelli presenti e puoi ripetere l\u2019operazione senza duplicare la cronologia.'),
     h('button', { class: 'btn wide', onclick: exportAll }, 'Esporta le playlist per altre app'),
     h('button', { class: 'btn wide', onclick: pickM3U }, 'Importa una playlist da un file'),
     h('small', { class: 'hint' }, 'Le playlist si scambiano con altri lettori musicali tramite file .m3u.')));
@@ -233,10 +240,28 @@ async function storageInfo(el) {
   x += 'Installata: ' + (navigator.standalone === true || matchMedia('(display-mode:standalone)').matches) + '\nAudioSession: ' + (navigator.audioSession ? navigator.audioSession.type : 'non disponibile') + '\nWeb Audio: ' + eng.status().supported + '\n' + navigator.userAgent;
   el.textContent = x;
 }
-async function doExport() { try { await shareOrDownload(await L.exportBackup()); } catch (e) { toast('Esportazione non riuscita: ' + e.message); } }
+/** Esporta il backup; la data dell'ultimo backup si aggiorna solo se il file è stato davvero salvato o condiviso (non se l'utente annulla). */
+async function doExport() {
+  try { const ok = await shareOrDownload(await L.exportBackup({ full: !!S.bkFull })); if (ok) { L.markBackupSaved(); toast('Backup salvato'); } }
+  catch (e) { toast('Esportazione non riuscita: ' + e.message); }
+}
+const nn = (n, one, many) => n + ' ' + (n === 1 ? one : many);
 async function doImport(e) {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
-  try { const r = await L.restoreBackup(JSON.parse(await f.text())); toast(`Backup importato: ${r.hit} brani ripristinati` + (r.wait ? `, ${r.wait} in attesa dei file audio` : '') + (r.dropped ? `, ${r.dropped} voci non valide ignorate` : ''), { ms: 4500 }); playsDirty = true; render(); }
-  catch (x) { toast('Backup non valido: ' + x.message); }
+  let json; try { json = JSON.parse(await f.text()); } catch { toast('Il file non \u00e8 un backup valido.'); return; }
+  let plan; try { plan = await L.planRestore(json); } catch (x) { toast('Backup non valido: ' + x.message); return; }
+  const detail = `Il backup contiene ${nn(plan.tracks, 'brano', 'brani')} (${plan.hit} gi\u00e0 in libreria, ${plan.wait} in attesa dei file audio), ${nn(plan.playlists, 'playlist', 'playlist')} (${plan.newPlaylists} ${plan.newPlaylists === 1 ? 'nuova' : 'nuove'}) e ${nn(plan.plays, 'ascolto', 'ascolti')} (${plan.newPlays} ${plan.newPlays === 1 ? 'nuovo' : 'nuovi'}).`
+    + (plan.images ? ` Include ${nn(plan.images, 'immagine scelta a mano', 'immagini scelte a mano')}.` : '') + ' Nulla di ci\u00f2 che hai ora viene cancellato e potrai annullare il ripristino per 24 ore.';
+  if (!await confirmSheet('Ripristinare il backup?', { ok: 'Ripristina', danger: false, detail })) return;
+  toast('Ripristino in corso\u2026', { sticky: true });
+  try {
+    const r = await L.restoreBackup(json);
+    toast(`Backup ripristinato: ${r.hit} brani` + (r.wait ? `, ${r.wait} in attesa dei file audio` : '') + (r.playsAdded ? `, ${nn(r.playsAdded, 'ascolto aggiunto', 'ascolti aggiunti')}` : '') + (r.dropped ? `, ${r.dropped} voci non valide ignorate` : ''), { ms: 9000, action: { label: 'Annulla', fn: doUndo } });
+    playsDirty = true; render();
+  } catch (x) { toast('Ripristino non riuscito: ' + x.message, { ms: 6000 }); }
+}
+async function doUndo() {
+  try { toast((await L.undoRestore()) ? 'Ripristino annullato' : 'Non c\u2019\u00e8 nulla da annullare'); playsDirty = true; render(); }
+  catch (x) { toast('Annullamento non riuscito: ' + x.message); }
 }
 bus.on('settings', () => { applyTheme(); });

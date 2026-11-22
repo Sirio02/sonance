@@ -117,6 +117,7 @@ export const iconBtn = (name, label, onclick, { cls = '', fill = false, size = 2
 /** Condivide file con il foglio di condivisione (iOS) oppure li scarica. */
 export async function shareOrDownload(files) {
   const arr = [].concat(files);
-  try { if (navigator.canShare?.({ files: arr })) { await navigator.share({ files: arr }); return; } } catch (e) { if (e.name === 'AbortError') return; }
+  try { if (navigator.canShare?.({ files: arr })) { await navigator.share({ files: arr }); return true; } } catch (e) { if (e.name === 'AbortError') return false; }   // false = l'utente ha annullato
   for (const f of arr) { const u = URL.createObjectURL(f), a = h('a', { href: u, download: f.name }); document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 5000); }
+  return true;
 }

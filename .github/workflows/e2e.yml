@@ -1,0 +1,17 @@
+name: E2E (non blocca la pubblicazione)
+# Test in un browser reale (Chromium). Si avvia a mano o per ogni pull request; la pubblicazione su Pages non dipende da questo workflow.
+on:
+  workflow_dispatch:
+  pull_request:
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install --no-audit --no-fund
+      - run: npx playwright install --with-deps chromium
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm run test:e2e

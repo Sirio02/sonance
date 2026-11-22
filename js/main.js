@@ -1,6 +1,6 @@
 /* Avvio dell'app: archivio → libreria → interfaccia → ripristino sessione. */
 import { $, $$, h, icon, bus, log, toast } from './util.js';
-import { S, saveS } from './store.js';
+import { S, saveS, initStores } from './store.js';
 import * as L from './library.js';
 import * as pl from './player.js';
 import * as eng from './audio.js';
@@ -152,6 +152,7 @@ function backupReminder() {
   wireTabSwipe(tabsEl); wireViewSwipe(); addEventListener('resize', () => placeIndicator());
   if (S.beta) syncBeta();
   mountPlayer();
+  await initStores();                 // playlist e metadati in attesa: da localStorage a IndexedDB (verificato, con ritorno automatico se non riesce)
   await L.loadLibrary();
   setTab('lib');
   if (S.start === 'last' && S.lastTab && S.lastTab !== 'lib' && tabIds().includes(S.lastTab)) showTab(S.lastTab, { dir: 0 });
@@ -194,7 +195,11 @@ if ('serviceWorker' in navigator) {
       if (reg.waiting && navigator.serviceWorker.controller) offer(reg.waiting);
       reg.addEventListener('updatefound', () => { const w = reg.installing; w?.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) offer(w); }); });
       navigator.serviceWorker.addEventListener('controllerchange', doReload);
-      setInterval(() => reg.update().catch(() => {}), 6 * 3600e3);
+      /* una PWA su iPhone resta viva per giorni: oltre che ogni 6 ore, si controlla al ritorno in primo piano (al massimo ogni 30 minuti) */
+      let lastCheck = Date.now();
+      const check = () => { lastCheck = Date.now(); reg.update().catch(() => {}); };
+      document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - lastCheck > 30 * 60e3) check(); });
+      setInterval(check, 6 * 3600e3);
     } catch (e) { log('SW: ' + e.message); }
   });
 }

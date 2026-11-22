@@ -18,7 +18,7 @@ Apri l'indirizzo pubblicato in Safari → Condividi → Aggiungi alla schermata 
 - **Duplicati**: stesso file o stesso titolo+artista con durata simile; si sceglie la copia da tenere e preferiti, ascolti e playlist passano a quella.
 - **Playlist M3U**: esporta una playlist (o tutte) e importa file `.m3u`/`.m3u8`, abbinando per nome file o artista+titolo; i brani mancanti vengono elencati.
 - **Ripresa dell'ultimo ascolto**: all'avvio il mini-player mostra l'ultimo brano in pausa alla posizione salvata; in cima alla Libreria restano le mensole «Ascoltati» e «Aggiunti di recente».
-- **Backup** JSON di metadati, playlist, preferiti, cronologia, preferenze (non i file audio).
+- **Backup** JSON (v6) di metadati, playlist, preferiti, cronologia, preferenze (non i file audio; con «Includi le copertine scelte a mano» anche le immagini scelte da te). Il ripristino mostra un riepilogo e chiede conferma, **unisce** i dati senza cancellare nulla, si può ripetere senza duplicare la cronologia e si può **annullare per 24 ore**.
 
 ## Ricerca online (copertine, immagini artista, testi)
 Fornitori in sequenza: iTunes → Deezer per copertine e recupero automatico dell'album quando manca nei tag; Deezer → Wikipedia (solo se il nome coincide e la pagina parla di musica) per gli artisti; LRCLIB per i testi. La ricerca gestisce anche nomi artista multipli o separati in modo incompleto nel nome file, verificando titolo, artista e durata prima di associare un risultato.
@@ -45,7 +45,10 @@ La PWA dichiara `id`, `start_url` e `scope` coerenti (`./`), `display: standalon
 ## Riproduzione e aggiornamenti
 - Il ripristino dell'ultima sessione parte solo a freddo: se hai già avviato un brano, non sovrascrive nulla.
 - «Aggiorna» con la musica in riproduzione **non interrompe l'audio**: l'aggiornamento si applica alla prima pausa; dopo il ricaricamento la sessione torna in pausa alla posizione esatta. Alla prima installazione del service worker la pagina non si ricarica.
-- Il precache è atomico (`addAll`): se un file manca l'installazione fallisce e resta la versione precedente.
+- Il precache è atomico e «fresco»: ogni file è richiesto con `cache: 'reload'` (salta la cache HTTP del browser: GitHub Pages usa `max-age=600` e, senza, un deploy ravvicinato installava file vecchi sotto un nome di versione nuovo); se un file manca l'installazione fallisce, la cache parziale viene eliminata e resta la versione precedente. Il controllo aggiornamenti parte al caricamento, ogni 6 ore e al ritorno in primo piano (al massimo ogni 30 minuti).
+
+## Dati e migrazione
+Playlist, copertine delle playlist e metadati in attesa del file audio vivevano in localStorage (circa 5 MB, condivisi con coda e impostazioni): con una libreria grande il salvataggio poteva fallire in silenzio. Ora stanno in IndexedDB. Al primo avvio la migrazione è **atomica e verificata**: si copia tutto in una sola transazione, si rilegge e si confronta; solo se coincide si libera localStorage (resta per 30 giorni una copia delle sole playlist in `sonance.migbak.v1`). Se qualcosa non torna non si cancella nulla e l'app continua come prima, riprovando all'avvio successivo. Le playlist hanno un identificatore stabile (sopravvive alla rinomina) che i backup v6 riportano; i nomi come «constructor» sono nomi qualunque.
 
 ## Annulla
 Eliminare brani (singoli o selezione) è **differito**: spariscono subito, ma file, preferiti, ascolti e playlist restano finché il toast «Annulla» scade (6 s) o l'app si chiude. Annullabili anche la rimozione da playlist e «Svuota i prossimi». La coda non viene toccata prima della conferma.
@@ -77,13 +80,13 @@ La quota predefinita documentata per `search.list` è 100 richieste al giorno pe
 index.html            guscio + Content-Security-Policy
 css/app.css           stile (temi, schede, animazioni)
 js/main.js            avvio, schede, aggiornamenti
-js/store.js           impostazioni (localStorage) + IndexedDB
+js/store.js           impostazioni e coda (localStorage) + IndexedDB (brani, audio, ascolti, playlist, metadati in attesa)
 js/library.js         brani, import, playlist, backup, coda di arricchimento
 js/online.js          iTunes / Deezer / Wikipedia / LRCLIB
 js/covers.js          copertine (miniature + grandi), immagini artista
 js/audio.js           motore: due <audio>, Web Audio, dissolvenza, sessione in pausa
 js/player.js          coda, passaggi tra brani, ascolti, timer, Media Session
-js/backup.js          validazione/normalizzazione dei backup (v5; importa anche v ≤ 4)
+js/backup.js          validazione/normalizzazione dei backup (v6; importa anche v ≤ 5)
 js/playstate.js       decisioni pure sul ciclo di vita della riproduzione (ripristino, aggiornamento app)
 js/color.js  logo.js   contrasto colori · logo SVG
 js/beta.js            registro delle funzioni beta; js/beta/yt-tab.js, youtube.js (parser) e youtube-config.js
@@ -94,7 +97,7 @@ tests/                node --test tests/*.test.mjs
 ```
 
 ## Sviluppo
-`npm run check` (sintassi) · `npm test` (116 test: logica pura, flussi con rete simulata, struttura PWA/SHELL, grafo dei moduli) · per provare in locale: `python3 -m http.server` (in locale il service worker usa la rete, non la cache).
+`npm run check` (sintassi) · `npm test` (138 test + 4 `todo` sui difetti noti: logica pura, flussi con rete simulata, archivio e ripristino con IndexedDB finto, struttura PWA/SHELL, grafo dei moduli) · `npm run test:e2e` (12 test in un browser reale — aggiornamento PWA, backup e ripristino, migrazione dell'archivio, playlist — più 11 `todo` sui difetti dell'audit; richiede `npm i -D playwright`, `npx playwright install chromium` e ffmpeg; con `SONANCE_APP=/percorso` si prova un'altra copia dell'app) · per provare in locale: `python3 -m http.server` (in locale il service worker usa la rete, non la cache).
 Il workflow esegue controlli e test, poi pubblica e scrive l'hash del commit nel nome della cache: ogni deploy mostra «Nuova versione disponibile · Aggiorna».
 
 ## Note

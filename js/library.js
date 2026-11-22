@@ -1,8 +1,8 @@
 /* Dati della libreria: brani, importazione, playlist, backup, arricchimento online (copertine/testi). */
-import { S, PL, savePL, PLC, savePLC, PEND, savePend, saveS, getTracks, putTrack, addTrack, removeTrackData, getBlob, getPlays, putPlaysBulk } from './store.js';
+import { S, PL, savePL, PLC, savePLC, PLID, plId, PEND, putPend, delPend, delPendMany, saveS, getTracks, putTrack, addTrack, removeTrackData, getBlob, getPlays, putPlaysUnique, delPlaysByKeys, playKey, kvGet, kvSet, kvDel, storesIdle } from './store.js';
 import { bus, log, toast, sleep, norm } from './util.js';
 import { readTags } from './tags.js';
-import { setCover, coverExists, albumKey, dropCache } from './covers.js';
+import { setCover, coverExists, albumKey, dropCache, exportManualImages, importManualImages } from './covers.js';
 import { trackArtists, parseArtistString, localSegment, reconcileArtists, segmentations } from './artists.js';
 import * as online from './online.js';
 import { parseM3U, matchEntries } from './m3u.js';
@@ -134,10 +134,11 @@ export const plTracks = n => (PL[n] || []).map(byId).filter(Boolean);
 export const plCreate = (n, ids = []) => { if (!n || PL[n]) return false; PL[n] = [...ids]; savePL(); touch(); return true; };
 export const plAdd = (n, id) => { PL[n] ||= []; if (PL[n].includes(id)) return false; PL[n].push(id); savePL(); touch(); return true; };
 export const plMove = (n, from, to) => { const a = PL[n]; if (!a) return; a.splice(to, 0, a.splice(from, 1)[0]); savePL(); touch(); };
-export const plDelete = n => { delete PL[n]; delete PLC[n]; savePL(); savePLC(); touch(); };
+export const plDelete = n => { delete PL[n]; delete PLC[n]; delete PLID[n]; savePL(); savePLC(); touch(); };
 export function plRename(n, v) {
   if (!v || PL[v]) return false;
   PL[v] = PL[n]; delete PL[n];
+  if (PLID[n]) { PLID[v] = PLID[n]; delete PLID[n]; }                // l'identificatore stabile segue la playlist
   if (PLC[n]) { PLC[v] = PLC[n]; delete PLC[n]; savePLC(); }
   savePL(); touch(); return true;
 }
@@ -191,40 +192,110 @@ export const smart = {
 /* ---------- backup ---------- */
 export const META = ['title', 'artist', 'album', 'trk', 'fav', 'lrc', 'lyricOffset', 'nc', 'nl', 'ncv', 'nlv', 'cu', 'p', 'pc', 'lp', 'added', 'src', 'aa', 'am', 'af', 'av', 'lsrc', 'll'];
 const bkey = key;
-export async function exportBackup() {
-  const data = { v: BACKUP_V, date: new Date().toISOString(), tracks: lib.list, playlists: PL, covers: PLC, plays: await getPlays(), settings: settingsForBackup(S) };
-  S.lastBackup = Date.now(); saveS();
+export async function exportBackup({ full = false } = {}) {
+  const data = { v: BACKUP_V, date: new Date().toISOString(), tracks: lib.list, playlists: { ...PL }, plid: Object.fromEntries(Object.keys(PL).map(n => [n, plId(n)])), covers: { ...PLC }, plays: await getPlays(), settings: settingsForBackup(S) };
+  if (full) data.images = await exportManualImages();                // «Backup completo»: copertine e immagini artista scelte a mano
   return new File([JSON.stringify(data)], 'sonance-backup.json', { type: 'application/json' });
 }
+/** Da chiamare solo quando il file è stato davvero salvato o condiviso: creare il file non basta (l'utente può annullare la condivisione). */
+export const markBackupSaved = () => { S.lastBackup = Date.now(); saveS(); bus.emit('settings'); };
+
+const sameVal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const UNDO_KEY = 'snapshot:prerestore', UNDO_INFO = 'snapshot:prerestore:info', UNDO_HOURS = 24;   // l'info è piccola: si legge senza caricare l'istantanea
+/** Che cosa farebbe il ripristino, senza modificare nulla: serve alla schermata di conferma. */
+export async function planRestore(raw) {
+  const j = checkBackup(raw), have = new Map(lib.list.map(t => [bkey(t), t]));
+  const hit = j.tracks.filter(bt => have.has(bkey(bt))).length, known = new Set((await getPlays()).map(playKey)), fresh = new Set();
+  for (const p of j.plays) { const k = playKey(p); if (!known.has(k)) fresh.add(k); }
+  const names = Object.keys(PL), ids = new Set(names.map(plId)), pln = Object.keys(j.playlists);
+  const newPlaylists = pln.filter(n => !(j.plid?.[n] && ids.has(j.plid[n])) && !names.includes(n)).length;
+  return { version: j.v, tracks: j.tracks.length, hit, wait: j.tracks.length - hit, playlists: pln.length, newPlaylists, plays: j.plays.length, newPlays: fresh.size,
+    images: Object.keys(j.images?.covers || {}).length + Object.keys(j.images?.artists || {}).length, dropped: j.dropped };
+}
+/** Ripristino non distruttivo e ripetibile: unisce i dati del backup a quelli presenti (nulla viene cancellato), non raddoppia la cronologia,
+    salva prima un'istantanea (per «Annulla ripristino») e, se qualcosa va storto a metà, torna da solo allo stato precedente. */
 export async function restoreBackup(raw) {
   const j = checkBackup(raw);                       // lancia se il file non è valido o proviene da una versione futura
   const byIdB = new Map(j.tracks.map(t => [t.id, t])), have = new Map(lib.list.map(t => [bkey(t), t]));
-  let hit = 0, wait = 0;
+  /* 1) piano: nulla viene modificato finché l'istantanea non è salvata */
+  const changes = [];
   for (const bt of j.tracks) {
-    const t = have.get(bkey(bt));
-    if (t) { await applyMeta(t, bt); hit++; }
-    else { PEND[bkey(bt)] = { ...Object.fromEntries(META.filter(k => bt[k] !== undefined).map(k => [k, bt[k]])), pls: [] }; wait++; }
+    const t = have.get(bkey(bt)); if (!t) continue;
+    const before = {}, after = {};
+    for (const k of META) if (bt[k] !== undefined && !sameVal(t[k], bt[k])) { before[k] = t[k]; after[k] = bt[k]; }
+    if (Object.keys(after).length) changes.push({ t, before, after });
   }
-  for (const [n, ids] of Object.entries(j.playlists)) {
-    if (!Object.hasOwn(PL, n)) PL[n] = [];
-    for (const id of ids) {
-      const bt = byIdB.get(id); if (!bt) continue;
-      const t = have.get(bkey(bt));
-      if (t) { if (!PL[n].includes(t.id)) PL[n].push(t.id); } else PEND[bkey(bt)]?.pls.push(n);
+  let hit = 0; const pendNew = {};
+  for (const bt of j.tracks) {
+    const k = bkey(bt);
+    if (have.has(k)) { hit++; continue; }
+    pendNew[k] = { ...Object.fromEntries(META.filter(x => bt[x] !== undefined).map(x => [x, bt[x]])), pls: [...(PEND[k]?.pls || [])] };
+  }
+  const wait = j.tracks.length - hit;
+  const target = new Map();                          // nome nella playlist del backup -> nome locale (prima per id stabile, poi per nome)
+  for (const n of Object.keys(j.playlists)) { const id = j.plid?.[n]; target.set(n, (id && Object.keys(PL).find(x => PLID[x]?.id === id)) || n); }
+  const tn = n => target.get(n) || n, plNames = [...new Set(target.values())];
+  const snap = {
+    at: Date.now(), tracks: changes.map(c => ({ id: c.t.id, before: c.before })),
+    pl: Object.fromEntries(plNames.map(n => [n, PL[n] ? [...PL[n]] : undefined])), plc: Object.fromEntries(Object.keys(j.covers).map(n => [tn(n), PLC[tn(n)]])),
+    pend: Object.fromEntries(Object.keys(pendNew).map(k => [k, PEND[k]])), settings: Object.fromEntries(Object.keys(j.settings).map(k => [k, S[k]])), playKeys: [],
+  };
+  await kvSet(UNDO_KEY, snap); await kvSet(UNDO_INFO, { at: snap.at });
+  try {
+    /* 2) applicazione */
+    for (const c of changes) { Object.assign(c.t, c.after); await saveTrack(c.t); }
+    for (const [n, ids] of Object.entries(j.playlists)) {
+      const to = tn(n); PL[to] ||= [];
+      if (j.plid?.[n] && !PLID[to]) PLID[to] = { id: j.plid[n], created: Date.now() };
+      for (const id of ids) {
+        const bt = byIdB.get(id); if (!bt) continue;
+        const k = bkey(bt), t = have.get(k);
+        if (t) { if (!PL[to].includes(t.id)) PL[to].push(t.id); }
+        else if (pendNew[k] && !pendNew[k].pls.includes(to)) pendNew[k].pls.push(to);
+      }
     }
+    for (const [n, u] of Object.entries(j.covers)) PLC[tn(n)] = u;
+    await putPend(pendNew);                          // lancia se non riesce a salvare: niente perdite silenziose
+    const idMap = new Map([...have].map(([k, t]) => [k, t.id]));
+    const pr = j.plays.length ? await putPlaysUnique(j.plays.map(p => ({ ...p, tid: idMap.get(bkey(byIdB.get(p.tid) || {})) || p.tid }))) : { added: 0, skipped: 0, keys: [] };
+    Object.assign(S, j.settings); saveS();
+    if (!savePL() || !savePLC()) throw Error('spazio insufficiente per salvare le playlist');
+    if (j.images) await importManualImages(j.images);
+    await storesIdle();
+    snap.playKeys = pr.keys; await kvSet(UNDO_KEY, snap);
+    touch(); bus.emit('settings');
+    return { hit, wait, ...(j.dropped ? { dropped: j.dropped } : {}), playsAdded: pr.added, playsSkipped: pr.skipped };
+  } catch (e) {
+    log('ripristino: ' + e.message);
+    try { await undoRestore(); } catch (u) { log('ripristino: ritorno allo stato precedente non riuscito: ' + u.message); }
+    throw Error('ripristino interrotto e annullato (' + e.message + ')');
   }
-  Object.assign(PLC, j.covers);
-  if (j.plays.length) { const idMap = new Map([...have].map(([k, t]) => [k, t.id])); await putPlaysBulk(j.plays.map(p => ({ ...p, tid: idMap.get(bkey(byIdB.get(p.tid) || {})) || p.tid }))); }
-  Object.assign(S, j.settings); saveS();
-  savePL(); savePLC(); savePend(); touch(); bus.emit('settings');
-  return j.dropped ? { hit, wait, dropped: j.dropped } : { hit, wait };
+}
+/** Annulla l'ultimo ripristino (entro 24 ore): rimette i valori precedenti dei brani, delle playlist, dei brani in attesa e delle impostazioni e toglie gli ascolti aggiunti. */
+export async function undoRestore() {
+  const s = await kvGet(UNDO_KEY); if (!s) { await kvDel(UNDO_INFO); return false; }
+  for (const { id, before } of s.tracks) { const t = byId(id); if (!t) continue; for (const [k, v] of Object.entries(before)) { if (v === undefined) delete t[k]; else t[k] = v; } await saveTrack(t); }
+  for (const [n, ids] of Object.entries(s.pl)) { if (ids === undefined) { delete PL[n]; delete PLID[n]; } else PL[n] = ids; }
+  for (const [n, u] of Object.entries(s.plc)) { if (u === undefined) delete PLC[n]; else PLC[n] = u; }
+  const put = {}, del = []; for (const [k, v] of Object.entries(s.pend)) { if (v === undefined) del.push(k); else put[k] = v; }
+  if (Object.keys(put).length) await putPend(put);
+  if (del.length) await delPendMany(del);
+  for (const [k, v] of Object.entries(s.settings)) { if (v === undefined) delete S[k]; else S[k] = v; }
+  saveS(); savePL(); savePLC();
+  if (s.playKeys?.length) await delPlaysByKeys(s.playKeys);
+  await storesIdle(); await kvDel(UNDO_KEY); await kvDel(UNDO_INFO); touch(); bus.emit('settings');
+  return true;
+}
+/** C'è un ripristino annullabile? (restituisce {at} oppure null; dopo 24 ore l'istantanea viene eliminata) */
+export async function restoreUndoInfo() {
+  try { const i = await kvGet(UNDO_INFO); if (!i) return null; if (Date.now() - i.at > UNDO_HOURS * 36e5) { await kvDel(UNDO_KEY); await kvDel(UNDO_INFO); return null; } return { at: i.at }; } catch { return null; }
 }
 const applyMeta = (t, m) => { for (const k of META) if (m[k] !== undefined) t[k] = m[k]; return saveTrack(t); };
 async function claim(t) {
   const m = PEND[key(t)]; if (!m) return;
   const { pls, ...r } = m; await applyMeta(t, r);
   for (const n of pls || []) { PL[n] ||= []; if (!PL[n].includes(t.id)) PL[n].push(t.id); }
-  delete PEND[key(t)]; savePL(); savePend();
+  savePL(); await delPend(key(t)).catch(e => log('brani in attesa: ' + e.message));
 }
 
 /* ---------- arricchimento online (copertine, testi, artisti) ---------- */

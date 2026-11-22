@@ -58,17 +58,22 @@ export function coverURL(t, size = 't') {
 }
 
 /** Salva una copertina. scope 'album' (predefinito se il brano ha un album) o 'track'. */
-export async function setCover(t, blob, scope) {
+/* Copertine scelte a mano dall'utente: quelle trovate online si possono riottenere, queste no, quindi vanno nel «Backup completo». */
+const MC = (() => { try { const a = JSON.parse(localStorage.getItem('sonance.mc')); return new Set(Array.isArray(a) ? a : []); } catch { return new Set(); } })();
+const saveMC = () => jset('sonance.mc', [...MC]);
+export async function setCover(t, blob, scope, { manual = false } = {}) {
   const useAlbum = scope ? scope === 'album' : !!t.album;
   const b = useAlbum && t.album ? 'A' + albumKey(t) : 'T' + t.id;
   const [full, thumb] = await shrinkMany(blob, [[640, .88], [256, .8]]);      // una sola decodifica
   await putBlob('cv:' + b, full); await putBlob('ct:' + b, thumb);
+  if (manual) { MC.add(b); saveMC(); }
   dropCache(b);
   bus.emit('covers');
 }
 export async function clearCover(t) {
   const b = base(t);
   await delBlobs(['cv:' + b, 'ct:' + b, 'c:' + t.id]);
+  if (MC.delete(b)) saveMC();
   dropCache(b); t.cu = null; bus.emit('covers');
 }
 /** Verifica leggera (solo esistenza delle chiavi): non decodifica né crea URL, quindi è adatta ai controlli in blocco. */
@@ -132,4 +137,23 @@ export async function setArtistImage(name, blob) {
 }
 export async function resetArtistImage(name) {
   const k = norm(name); await delBlobs(['ai:' + k]); delete AI[k]; saveAI(); aiCache.delete(k); bus.emit('covers');
+}
+
+/* ---- «Backup completo»: copertine e immagini artista scelte a mano ---- */
+const dataUrlToBlob = u => { const [h, d] = u.split(','); const bin = atob(d), a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return new Blob([a], { type: /^data:([^;]+)/.exec(h)[1] }); };
+export async function exportManualImages() {
+  const out = { covers: {}, artists: {} };
+  for (const b of MC) { try { const x = await getBlob('cv:' + b); if (x) out.covers[b] = await blobToDataURL(x); } catch (e) { log('copertina manuale ' + b + ': ' + e.message); } }
+  for (const [k, e] of Object.entries(AI)) if (e?.m && e?.b) { try { const x = await getBlob('ai:' + k); if (x) out.artists[k] = await blobToDataURL(x); } catch (err) { log('immagine artista ' + k + ': ' + err.message); } }
+  return out;
+}
+/** Rimette le immagini del backup (già validate): ricrea anche le miniature e le segna come scelte a mano. Restituisce il numero di immagini. */
+export async function importManualImages(img = {}) {
+  let n = 0;
+  for (const [b, u] of Object.entries(img.covers || {})) {
+    const full = dataUrlToBlob(u); await putBlob('cv:' + b, full); await putBlob('ct:' + b, await shrink(full, 256, .8)); MC.add(b); dropCache(b); n++;
+  }
+  for (const [k, u] of Object.entries(img.artists || {})) { await putBlob('ai:' + k, dataUrlToBlob(u)); AI[k] = { b: 1, t: Date.now(), m: 1 }; aiCache.delete(k); n++; }
+  if (n) { saveMC(); saveAI(); bus.emit('covers'); }
+  return n;
 }
